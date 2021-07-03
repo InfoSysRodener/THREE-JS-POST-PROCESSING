@@ -16,12 +16,18 @@ export default class SceneManager {
         const renderer = new THREE.WebGLRenderer({ canvas:this.canvas, antialias: true, alpha: true });
         renderer.setSize(window.innerWidth, window.innerHeight, false);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+        renderer.physicallyCorrectLights = true;
+        /**
+         * Shadow
+         */
+         renderer.shadowMap.enabled = true;
+         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
         window.addEventListener('resize', () => this.onWindowsResize(), false);
 
         const camera = new THREE.PerspectiveCamera(75 ,window.innerWidth / window.innerHeight,0.1,1000);
-        camera.position.z = 20;
-        camera.position.y = 5;
+        camera.position.z = 10;
+        camera.position.y = 10;
         camera.lookAt(0,0,0);
 
         //init stats

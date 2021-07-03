@@ -2,81 +2,248 @@ import '../style.css'
 import * as THREE from 'three';
 import * as dat from 'dat.gui';
 import SceneManager from './sceneManager/scene';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { DotScreenPass } from 'three/examples/jsm/postprocessing/DotScreenPass.js';
+import { GlitchPass } from 'three/examples/jsm/postprocessing/GlitchPass.js';
+import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+
+/**
+ * Shader pass
+ */
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { RGBShiftShader } from 'three/examples/jsm/shaders/RGBShiftShader.js';
+import { LuminosityShader } from 'three/examples/jsm/shaders/LuminosityShader.js';
+import { PixelShader } from 'three/examples/jsm/shaders/PixelShader.js';
+
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+
 import gsap from 'gsap';
 
-const gui = new dat.GUI();
 
-//scene
+const gui = new dat.GUI();
+const debugObject = {};
+
+/**
+ * Scene
+ */
 const canvas = document.querySelector('#canvas');
 const scene = new SceneManager(canvas);
 let conf = { color : '#a48c5d' }; 
-scene.scene.background.set(conf.color);
 scene.addOrbitControl();
-scene.addFog(1,100,conf.color);
 
-//fog GUI
-const fogFolder = gui.addFolder('FOG');
-fogFolder.add(scene.scene.fog, 'near').min(1).max(100).step(0.01).listen();
-fogFolder.add(scene.scene.fog, 'far').min(1).max(100).step(0.01).listen();
-fogFolder.addColor(conf, 'color').onChange((color)=>{
-	scene.scene.fog.color.set(color);
-	scene.scene.background.set(color);
-	scene.scene.children
-		.filter(obj => obj.name === 'floor')[0]
-		.material.color.set(color)
+/**
+ * Lights
+ */
+ const directionalLight = new THREE.DirectionalLight(0xFFFFFF,3);
+ directionalLight.position.set(10,2,0);
+ directionalLight.castShadow = true;
+ directionalLight.shadow.camera.top = 10;
+ directionalLight.shadow.camera.right = 10;
+ directionalLight.shadow.camera.left = - 10;
+ directionalLight.shadow.camera.bottom = - 10;
+ directionalLight.shadow.mapSize.width = 1024; 
+ directionalLight.shadow.mapSize.height = 1024; 
+ directionalLight.shadow.camera.near = 1; 
+ directionalLight.shadow.camera.far = 20; 
+ scene.add(directionalLight);
+
+const guiLight = gui.addFolder('light'); 
+guiLight.add(directionalLight,'intensity').min(0).max(10).step(0.001).name('Intensity');
+guiLight.add(directionalLight.position,'x').min(-5).max(5).step(0.001).name('X');
+guiLight.add(directionalLight.position,'y').min(-5).max(5).step(0.001).name('Y');
+guiLight.add(directionalLight.position,'z').min(-5).max(5).step(0.001).name('Z');
+
+
+/**
+ * Environment Map
+ */
+const environmentMap = new THREE.CubeTextureLoader().load([
+	'./environment/2/px.png',
+	'./environment/2/nx.png',
+	'./environment/2/py.png',
+	'./environment/2/ny.png',
+	'./environment/2/pz.png',
+	'./environment/2/nz.png',
+])
+scene.scene.background = environmentMap;
+scene.scene.environment = environmentMap;
+environmentMap.encoding = THREE.sRGBEncoding;
+
+/**
+ * Update Renderer
+ */
+scene.renderer.outputEncoding = THREE.sRGBEncoding;
+scene.renderer.toneMappingExposure = 3;
+
+gui.add(scene.renderer, 'toneMappingExposure').min(0).max(10).step(0.001);
+gui.add(scene.renderer,'toneMapping', {
+	No: THREE.NoToneMapping,
+	Linear : THREE.LinearToneMapping,
+	Reinhard : THREE.ReinhardToneMapping,
+	Cineon : THREE.CineonToneMapping,
+	ACESfilmic :THREE.ACESFilmicToneMapping	
+}).onFinishChange(() => {
+	scene.renderer.toneMapping = Number(scene.renderer.toneMapping);
+	updateAllMaterial();
+})
+
+/**
+ * Update Materials
+ */
+function updateAllMaterial(){
+	scene.scene.traverse((child) => {
+		if(child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial){
+			// child.material.envMap = environmentMap;
+			child.material.envMapIntensity = debugObject.envMapIntensity;
+			child.castShadow = true;
+			child.receiveShadow = true;
+		}
+	})
+}
+debugObject.envMapIntensity = 1;
+gui.add(debugObject, 'envMapIntensity').min(0).max(10).step(0.001).onChange(updateAllMaterial);
+
+/**
+ * GLTF Loader
+ * Model
+ */
+const gltfLoader = new GLTFLoader();
+gltfLoader.load('./model/DamagedHelmet/DamagedHelmet.gltf',(gltf) => {
+		gltf.scene.scale.set(10,10,10);
+		// gltf.scene.position.set(0,-4,0);
+		scene.add(gltf.scene);
+		gui.add(gltf.scene.rotation,'y').min(- Math.PI).max(Math.PI).step(0.001).name('rotation');
+
+		updateAllMaterial();
+	}
+)
+
+
+/**
+ * Post Processing
+ */
+let RenderTargetClass = null;
+
+if(scene.renderer.getPixelRatio() === 1 && scene.renderer.capabilities.isWebGL2){
+	RenderTargetClass = THREE.WebGLMultisampleRenderTarget;
+	console.log('Using MultiSampleRenderTarget');
+}else{
+	RenderTargetClass = THREE.WebGLRenderTarget;
+	console.log('Using WebGlRenderTarget');
+}
+
+const renderTarget = new RenderTargetClass(
+	800,
+	600,
+	{
+		minFilter:THREE.LinearFilter,
+		magFilter:THREE.LinearFilter,
+		format:THREE.RGBAFormat,
+		encoding:THREE.sRGBEncoding
+	}
+)
+
+const effectComposer = new EffectComposer(scene.renderer,renderTarget);
+effectComposer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+effectComposer.setSize(window.innerWidth,window.innerHeight);
+
+const renderPass = new RenderPass(scene.scene, scene.camera);
+effectComposer.addPass(renderPass);
+
+const dotScreenPass = new DotScreenPass();
+dotScreenPass.enabled = false;
+effectComposer.addPass(dotScreenPass);
+
+const dotScreenGui = gui.addFolder('dotScreenPass');
+dotScreenGui.add(dotScreenPass, 'enabled');
+
+const glitchPass = new GlitchPass();
+glitchPass.enabled = false;
+effectComposer.addPass(glitchPass);
+
+const glitchPassGui = gui.addFolder('GlitchPass');
+glitchPassGui.add(glitchPass, 'enabled');
+
+const rgbShifPass = new ShaderPass(RGBShiftShader);
+rgbShifPass.enabled = false;
+effectComposer.addPass(rgbShifPass);
+
+const rgbShifPassGui = gui.addFolder('rgbShifPass');
+rgbShifPassGui.add(rgbShifPass, 'enabled');
+
+const luminosityShader = new ShaderPass(LuminosityShader);
+luminosityShader.enabled = false;
+effectComposer.addPass(luminosityShader);
+
+const luminosityShaderGui = gui.addFolder('luminosityShader');
+luminosityShaderGui.add(luminosityShader, 'enabled');
+
+const unrealBloomPass = new UnrealBloomPass();
+unrealBloomPass.enabled = false;
+unrealBloomPass.strength = 0.3;
+unrealBloomPass.radius = 1;
+unrealBloomPass.threshold = 0.6;
+effectComposer.addPass(unrealBloomPass);
+
+const unrealBloomPassGui = gui.addFolder('UnrealBloomPass');
+unrealBloomPassGui.add(unrealBloomPass, 'enabled');
+unrealBloomPassGui.add(unrealBloomPass, 'strength').min(0).max(2).step(0.001);
+unrealBloomPassGui.add(unrealBloomPass, 'radius').min(0).max(2).step(0.001);
+unrealBloomPassGui.add(unrealBloomPass, 'threshold').min(0).max(2).step(0.001);
+
+let params = {
+	pixelSize: 6
+};
+
+const pixelPass = new ShaderPass(PixelShader);
+pixelPass.enabled = false;
+pixelPass.uniforms[ "resolution" ].value = new THREE.Vector2( window.innerWidth, window.innerHeight );
+pixelPass.uniforms[ "resolution" ].value.multiplyScalar( window.devicePixelRatio );
+pixelPass.uniforms[ "pixelSize" ].value = params.pixelSize;
+effectComposer.addPass(pixelPass);
+
+
+const pixelPassGui = gui.addFolder('pixelPass');
+pixelPassGui.add(pixelPass, 'enabled');
+pixelPassGui.add(params, 'pixelSize').min( 2 ).max( 32 ).step( 2 ).onFinishChange(() => {
+	pixelPass.uniforms[ "pixelSize" ].value = params.pixelSize;
 });
-const axesHelper = new THREE.AxesHelper(5);
-
-//lights
-const directionalLight = new THREE.DirectionalLight(0xFFFFFF,1);
-directionalLight.position.set(10,10,10);
-scene.add(directionalLight);
-const directionalHelper = new THREE.DirectionalLightHelper( directionalLight, 5 );
-scene.add(directionalHelper);
-
-gui.add(directionalHelper, 'visible').name('DLight Helper')
-
-const ambiantLight = new THREE.AmbientLight(0xFFFFFF,1);
-scene.add(ambiantLight);
-
-//geometry
-const width = 240;  
-const height = 240;   
-const geometry = new THREE.PlaneGeometry(width,height,100,100);
-const material = new THREE.MeshPhongMaterial( { color: conf.color} );
-const plane = new THREE.Mesh(geometry,material);
-plane.name = 'floor';
-plane.rotation.x = Math.PI * 1.50;
-scene.add(plane);
 
 
-gui.add(material, 'wireframe').name('Plane WireFrame');
+/**
+ * Antiallias
+ */
+if(scene.renderer.getPixelRatio() === 1 && !scene.renderer.capabilities.isWebGL2){
+	const smaaPass = new SMAAPass();
+	effectComposer.addPass(smaaPass);
 
+	console.log('Using SMAA');
+}
 
-const boxGeometry = new THREE.BoxBufferGeometry(4,4,4);
-const boxMaterial = new THREE.MeshStandardMaterial({color:0x442255});
-const cube = new THREE.Mesh(boxGeometry, boxMaterial);
-cube.position.y = 5;
-cube.add(axesHelper);
-scene.add(cube);
-
-const cubeGUI = gui.addFolder('Cube');
-cubeGUI.add(boxMaterial, 'wireframe').name('Box Wireframe');
-cubeGUI.add(cube.scale, 'x').min(1).max(5).step(0.01).name('BoxScale X');
-cubeGUI.add(cube.scale, 'y').min(1).max(5).step(0.01).name('BoxScale Y');
-cubeGUI.add(cube.scale, 'z').min(1).max(5).step(0.01).name('BoxScale Z');
-
-gsap.to(cube.rotation,{ duration:3,delay:3,x: Math.PI * 2 });
-
+/**
+ * Animate
+ */
 const clock = new THREE.Clock();
+let previousTime = 0;
 
 const animate = () => {
 	const elapsedTime = clock.getElapsedTime();
+	const deltaTime =  elapsedTime - previousTime; 
+	previousTime = elapsedTime;
 
-	cube.rotation.y = elapsedTime;
+	/**
+	 * Animation
+	 */
+	// if(mixer !== null) mixer.update(deltaTime);
 
+	/**
+	 * Post Processing
+	 */
+	effectComposer.render();
 	
-	scene.onUpdate();
+	// scene.onUpdate();
 	scene.onUpdateStats();
 	requestAnimationFrame( animate );
 };
