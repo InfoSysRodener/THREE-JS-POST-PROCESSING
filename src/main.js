@@ -49,7 +49,7 @@ scene.addOrbitControl();
  directionalLight.shadow.camera.far = 20; 
  scene.add(directionalLight);
 
-const guiLight = gui.addFolder('light'); 
+const guiLight = gui.addFolder('Light'); 
 guiLight.add(directionalLight,'intensity').min(0).max(10).step(0.001).name('Intensity');
 guiLight.add(directionalLight.position,'x').min(-5).max(5).step(0.001).name('X');
 guiLight.add(directionalLight.position,'y').min(-5).max(5).step(0.001).name('Y');
@@ -77,8 +77,9 @@ environmentMap.encoding = THREE.sRGBEncoding;
 scene.renderer.outputEncoding = THREE.sRGBEncoding;
 scene.renderer.toneMappingExposure = 3;
 
-gui.add(scene.renderer, 'toneMappingExposure').min(0).max(10).step(0.001);
-gui.add(scene.renderer,'toneMapping', {
+const toneMappingGui = gui.addFolder('ToneMapping');
+toneMappingGui.add(scene.renderer, 'toneMappingExposure').min(0).max(10).step(0.001);
+toneMappingGui.add(scene.renderer, 'toneMapping', {
 	No: THREE.NoToneMapping,
 	Linear : THREE.LinearToneMapping,
 	Reinhard : THREE.ReinhardToneMapping,
@@ -128,10 +129,8 @@ let RenderTargetClass = null;
 
 if(scene.renderer.getPixelRatio() === 1 && scene.renderer.capabilities.isWebGL2){
 	RenderTargetClass = THREE.WebGLMultisampleRenderTarget;
-	console.log('Using MultiSampleRenderTarget');
 }else{
 	RenderTargetClass = THREE.WebGLRenderTarget;
-	console.log('Using WebGlRenderTarget');
 }
 
 const renderTarget = new RenderTargetClass(
@@ -152,6 +151,9 @@ effectComposer.setSize(window.innerWidth,window.innerHeight);
 const renderPass = new RenderPass(scene.scene, scene.camera);
 effectComposer.addPass(renderPass);
 
+/**
+ * Effects / Pass
+ */
 const dotScreenPass = new DotScreenPass();
 dotScreenPass.enabled = false;
 effectComposer.addPass(dotScreenPass);
@@ -218,9 +220,36 @@ pixelPassGui.add(params, 'pixelSize').min( 2 ).max( 32 ).step( 2 ).onFinishChang
 if(scene.renderer.getPixelRatio() === 1 && !scene.renderer.capabilities.isWebGL2){
 	const smaaPass = new SMAAPass();
 	effectComposer.addPass(smaaPass);
-
-	console.log('Using SMAA');
 }
+
+/**
+ * Overlay
+ */
+const overlayGeometry = new THREE.PlaneBufferGeometry(2,2,1,1);
+const overlayMaterials = new THREE.ShaderMaterial({
+	transparent:true,
+	uniforms:{
+		uAlpha: { value: 0 },
+
+	},
+	vertexShader:`
+		void main(){
+			gl_Position = vec4(position, 1.0);
+		}
+	`,
+	fragmentShader:`
+		uniform float uAlpha;
+
+		void main(){
+			gl_FragColor = vec4(0.0, 0.0, 0.0, uAlpha);
+		}
+	`
+})
+const overlayMesh = new THREE.Mesh(overlayGeometry,overlayMaterials);
+scene.add(overlayMesh);
+
+
+
 
 /**
  * Animate
