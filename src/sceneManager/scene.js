@@ -20,8 +20,8 @@ export default class SceneManager {
         /**
          * Shadow
          */
-         renderer.shadowMap.enabled = true;
-         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
         window.addEventListener('resize', () => this.onWindowsResize(), false);
 

@@ -2,6 +2,7 @@ import '../style.css'
 import * as THREE from 'three';
 import * as dat from 'dat.gui';
 import SceneManager from './sceneManager/scene';
+import gsap from 'gsap';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { DotScreenPass } from 'three/examples/jsm/postprocessing/DotScreenPass.js';
@@ -19,10 +20,9 @@ import { PixelShader } from 'three/examples/jsm/shaders/PixelShader.js';
 
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-import gsap from 'gsap';
-
 
 const gui = new dat.GUI();
+gui.closed = true;
 const debugObject = {};
 
 /**
@@ -32,6 +32,84 @@ const canvas = document.querySelector('#canvas');
 const scene = new SceneManager(canvas);
 let conf = { color : '#a48c5d' }; 
 scene.addOrbitControl();
+
+/**
+ * DOM loading bar
+ */
+const loadingElement = document.querySelector('.loading-bar');
+
+/**
+ * Loader Manager
+ */
+let sceneReady = false;
+const loadingManager = new THREE.LoadingManager(
+	// Loaded
+	() => {
+		gsap.delayedCall(0.5,() => {
+			gsap.to(overlayMaterials.uniforms.uAlpha, {duration:3,value:0, delay:1 });
+			loadingElement.classList.add('ended');
+			loadingElement.style.transform = '';
+		});
+		gsap.delayedCall(2,()=>{
+			sceneReady = true;
+		})
+	},
+	// Processing
+	(itemUrl, itemsLoaded,itemsTotal) => {
+		const progressRatio = itemsLoaded / itemsTotal;
+		loadingElement.style.transform = `scaleX(${progressRatio})`;
+	}
+);
+
+/**
+ * Raycaster
+ */
+const raycaster = new THREE.Raycaster();
+
+/**
+ * Points of interest
+ */
+const points = [
+	{
+		position:new THREE.Vector3(1.55, 0.3, 3),
+		element: document.querySelector('.point-0')
+	},
+	{
+		position:new THREE.Vector3(-2.55, 1.3, 2),
+		element: document.querySelector('.point-1')
+	},
+	{
+		position:new THREE.Vector3(0, -1, -5),
+		element: document.querySelector('.point-2')
+	}
+]
+
+
+/**
+ * Overlay
+ */
+ const overlayGeometry = new THREE.PlaneBufferGeometry(2,2,1,1);
+ const overlayMaterials = new THREE.ShaderMaterial({
+	 transparent:true,
+	 uniforms:{
+		 uAlpha: { value: 1 },
+	 },
+	 vertexShader:`
+		 void main(){
+			 gl_Position = vec4(position, 1.0);
+		 }
+	 `,
+	 fragmentShader:`
+		 uniform float uAlpha;
+ 
+		 void main(){
+			 gl_FragColor = vec4(0.0, 0.0, 0.0, uAlpha);
+		 }
+	 `
+ })
+ const overlayMesh = new THREE.Mesh(overlayGeometry,overlayMaterials);
+ scene.add(overlayMesh);
+
 
 /**
  * Lights
@@ -59,7 +137,7 @@ guiLight.add(directionalLight.position,'z').min(-5).max(5).step(0.001).name('Z')
 /**
  * Environment Map
  */
-const environmentMap = new THREE.CubeTextureLoader().load([
+const environmentMap = new THREE.CubeTextureLoader(loadingManager).load([
 	'./environment/2/px.png',
 	'./environment/2/nx.png',
 	'./environment/2/py.png',
@@ -110,9 +188,9 @@ gui.add(debugObject, 'envMapIntensity').min(0).max(10).step(0.001).onChange(upda
  * GLTF Loader
  * Model
  */
-const gltfLoader = new GLTFLoader();
+const gltfLoader = new GLTFLoader(loadingManager);
 gltfLoader.load('./model/DamagedHelmet/DamagedHelmet.gltf',(gltf) => {
-		gltf.scene.scale.set(10,10,10);
+		gltf.scene.scale.set(5,5,5);
 		// gltf.scene.position.set(0,-4,0);
 		scene.add(gltf.scene);
 		gui.add(gltf.scene.rotation,'y').min(- Math.PI).max(Math.PI).step(0.001).name('rotation');
@@ -215,40 +293,12 @@ pixelPassGui.add(params, 'pixelSize').min( 2 ).max( 32 ).step( 2 ).onFinishChang
 
 
 /**
- * Antiallias
+ *  Antialias
  */
 if(scene.renderer.getPixelRatio() === 1 && !scene.renderer.capabilities.isWebGL2){
 	const smaaPass = new SMAAPass();
 	effectComposer.addPass(smaaPass);
 }
-
-/**
- * Overlay
- */
-const overlayGeometry = new THREE.PlaneBufferGeometry(2,2,1,1);
-const overlayMaterials = new THREE.ShaderMaterial({
-	transparent:true,
-	uniforms:{
-		uAlpha: { value: 0 },
-
-	},
-	vertexShader:`
-		void main(){
-			gl_Position = vec4(position, 1.0);
-		}
-	`,
-	fragmentShader:`
-		uniform float uAlpha;
-
-		void main(){
-			gl_FragColor = vec4(0.0, 0.0, 0.0, uAlpha);
-		}
-	`
-})
-const overlayMesh = new THREE.Mesh(overlayGeometry,overlayMaterials);
-scene.add(overlayMesh);
-
-
 
 
 /**
@@ -262,10 +312,41 @@ const animate = () => {
 	const deltaTime =  elapsedTime - previousTime; 
 	previousTime = elapsedTime;
 
+
 	/**
-	 * Animation
+	 * HTML/Css Point
 	 */
-	// if(mixer !== null) mixer.update(deltaTime);
+	if(sceneReady){
+		for(let point of points)
+		{
+			const screenPosition = point.position.clone();
+			screenPosition.project(scene.camera);
+	
+			// update the picking ray with the camera and mouse position
+			raycaster.setFromCamera(screenPosition, scene.camera);
+			const intersects = raycaster.intersectObjects(scene.scene.children,true);
+	
+			if(intersects.length === 0){
+				point.element.classList.add('visible');
+			}else{
+				const intersectionDistance = intersects[0].distance;
+				const pointDistance = point.position.distanceTo(scene.camera.position);
+	
+				if(intersectionDistance < pointDistance){
+					point.element.classList.remove('visible');
+				}else{
+					point.element.classList.add('visible');
+				}
+			
+			}
+			
+			const translateX = screenPosition.x * window.innerWidth * 0.5;
+			const translateY = - screenPosition.y * window.innerHeight * 0.5;
+			point.element.style.transform = `translate(${translateX}px,${translateY}px)`
+	
+		}
+	}
+	
 
 	/**
 	 * Post Processing
